@@ -1,5 +1,4 @@
-import pandas as pd, sys
-sys.stdout.reconfigure(encoding='utf-8')
+import pandas as pd
 
 INDIA_PATTERN = r'India$|,\s*India\b'
 chunks = pd.read_csv(

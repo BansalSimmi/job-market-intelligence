@@ -14,10 +14,9 @@ build/
 .env.*
 !.env.example
 
-# Data files — download manually or via DVC
+# Data (raw CSVs are large – manage via DVC or manual download)
 data/raw/*.csv
 data/processed/*.csv
-data/processed/*.png
 
 # Jupyter checkpoints
 .ipynb_checkpoints/

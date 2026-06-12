@@ -1,3 +1,5 @@
+# Step 2: Load cleaned data into PostgreSQL
+
 import os
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -6,16 +8,24 @@ import urllib.parse
 
 load_dotenv(find_dotenv())
 
-BASE_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-COMBINED_FILE = os.path.join(BASE_DIR, "data", "processed", "job_market_combined.csv")
+def clear_existing_data(db_engine):
+    """Truncates tables before inserting new data to prevent duplicates."""
+    print("\nClearing existing data from tables...")
+    try:
+        with db_engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE job_listings, fresher_applications RESTART IDENTITY CASCADE;"))
+        print("  Tables cleared successfully.")
+    except Exception as e:
+        print(f"  Warning: Could not clear tables. They might not exist yet. Error: {e}")
 
+# DATABASE CONNECTION
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "job_market")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASS = os.getenv("DB_PASS", os.getenv("DB_PASSWORD", "password"))
 
-DB_PASS_ESCAPED  = urllib.parse.quote_plus(DB_PASS)
+DB_PASS_ESCAPED = urllib.parse.quote_plus(DB_PASS)
 CONNECTION_STRING = f"postgresql+psycopg2://{DB_USER}:{DB_PASS_ESCAPED}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 print("Connecting to PostgreSQL...")
@@ -24,47 +34,47 @@ engine = create_engine(CONNECTION_STRING)
 try:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
-    print("  Connected.")
+    print("  Connection successful!")
 except Exception as e:
     print(f"  Connection failed: {e}")
+    print("  Check your .env file and make sure PostgreSQL is running.")
     raise
 
 
-def clear_tables(db_engine):
-    print("Clearing existing data...")
-    try:
-        with db_engine.begin() as conn:
-            conn.execute(text("TRUNCATE TABLE job_listings, fresher_applications RESTART IDENTITY CASCADE;"))
-        print("  Done.")
-    except Exception as e:
-        print(f"  Warning: {e}")
+# CLEAR EXISTING DATA
+clear_existing_data(engine)
 
 
-clear_tables(engine)
-
-
+# LOAD COMBINED CSV
+COMBINED_FILE = r"C:\Users\simmi\OneDrive\Desktop\job-market-intelligence\data\processed\job_market_combined.csv"
 print(f"\nLoading {COMBINED_FILE}...")
 df = pd.read_csv(COMBINED_FILE)
-print(f"  Rows: {len(df)}")
+print(f"  Total rows: {len(df)}")
 
+# Split into source groups
+# DS1 (salary_ds) + DS3 (ai_market_ds) → job_listings
+# DS2 (fresher_ds)                      → fresher_applications
 df_salary  = df[df["source"].isin(["salary_ds", "ai_market_ds"])].copy()
 df_fresher = df[df["source"] == "fresher_ds"].copy()
 
 ds1_rows = (df["source"] == "salary_ds").sum()
 ds2_rows = (df["source"] == "fresher_ds").sum()
 ds3_rows = (df["source"] == "ai_market_ds").sum()
-print(f"  salary_ds rows   : {ds1_rows}")
-print(f"  fresher_ds rows  : {ds2_rows}")
-print(f"  ai_market_ds rows: {ds3_rows}")
-print(f"  → job_listings   : {len(df_salary)}")
+print(f"  DS1 (salary_ds) rows:    {ds1_rows}")
+print(f"  DS2 (fresher_ds) rows:   {ds2_rows}")
+print(f"  DS3 (ai_market_ds) rows: {ds3_rows}  ← AI/ML insights dataset")
+print(f"  → job_listings total:    {len(df_salary)}  (DS1 + DS3)")
 
 
-# --- job_listings ---
-print("\nLoading job_listings...")
+# LOAD job_listings  (DS1 + DS3)
+print("\nLoading job_listings table...")
 
+# Include DS3 extra columns where schema allows
 listings_cols = ["job_role", "city", "state", "locality", "salary_inr", "source"]
 listings_cols = [c for c in listings_cols if c in df_salary.columns]
 df_listings = df_salary[listings_cols].copy()
+
+# Ensure correct types
 df_listings["salary_inr"] = pd.to_numeric(df_listings["salary_inr"], errors="coerce")
 
 df_listings.to_sql(
@@ -75,11 +85,11 @@ df_listings.to_sql(
     chunksize=500,
     method="multi"
 )
-print(f"  Inserted {len(df_listings)} rows")
+print(f"  Inserted {len(df_listings)} rows into job_listings  (DS1: {ds1_rows} + DS3: {ds3_rows})")
 
 
-# --- fresher_applications ---
-print("\nLoading fresher_applications...")
+# LOAD fresher_applications  (DS2)
+print("\nLoading fresher_applications table...")
 
 fresher_cols = [
     "gender", "age", "graduation_year", "college", "degree", "branch",
@@ -95,14 +105,13 @@ fresher_cols = [
 fresher_cols = [c for c in fresher_cols if c in df_fresher.columns]
 df_fresh = df_fresher[fresher_cols].copy()
 
+# Type fixes
 numeric_cols = ["cgpa", "offered_salary_inr", "profile_completion_pct"]
-int_cols     = [
-    "age", "graduation_year", "backlogs", "projects_count",
-    "certifications_count", "linkedin_connections",
-    "interview_rounds", "response_time_days",
-    "gap_year", "prior_internship", "linkedin_premium",
-    "referral_applied", "hired"
-]
+int_cols     = ["age", "graduation_year", "backlogs", "projects_count",
+                "certifications_count", "linkedin_connections",
+                "interview_rounds", "response_time_days",
+                "gap_year", "prior_internship", "linkedin_premium",
+                "referral_applied", "hired"]
 
 for col in numeric_cols:
     if col in df_fresh.columns:
@@ -112,11 +121,13 @@ for col in int_cols:
     if col in df_fresh.columns:
         df_fresh[col] = pd.to_numeric(df_fresh[col], errors="coerce").astype("Int64")
 
+# application_date as proper date
 if "application_date" in df_fresh.columns:
     df_fresh["application_date"] = pd.to_datetime(
         df_fresh["application_date"], errors="coerce"
     ).dt.date
 
+# hiring_stage — convert ordered categorical back to string for Postgres
 if "hiring_stage" in df_fresh.columns:
     df_fresh["hiring_stage"] = df_fresh["hiring_stage"].astype(str)
 
@@ -128,14 +139,17 @@ df_fresh.to_sql(
     chunksize=500,
     method="multi"
 )
-print(f"  Inserted {len(df_fresh)} rows")
+print(f"  Inserted {len(df_fresh)} rows into fresher_applications")
 
 
-# --- dim_city ---
+
+# POPULATE dim_city   
 print("\nPopulating dim_city...")
 
+# Gather all distinct city/state/locality combos from both datasets
 cities_ds1 = df_salary[["city", "state", "locality"]].copy() if "locality" in df_salary.columns \
     else df_salary[["city", "state"]].assign(locality=None)
+
 cities_ds2 = df_fresher[["city"]].assign(state=None, locality=None)
 
 all_cities = (
@@ -159,12 +173,13 @@ with engine.begin() as conn:
         })
         inserted_cities += result.rowcount
 
-print(f"  {inserted_cities} new cities inserted ({len(all_cities)} unique total)")
+print(f"  dim_city: {inserted_cities} new cities inserted ({len(all_cities)} unique cities total)")
 
 
-# --- dim_role ---
+# POPULATE dim_role
 print("\nPopulating dim_role...")
 
+# DS1 may have sector if clean_data added it; fall back to None
 roles_ds1 = df_salary[["job_role"]].copy()
 roles_ds1["sector"] = df_salary["sector"] if "sector" in df_salary.columns else None
 
@@ -191,10 +206,10 @@ with engine.begin() as conn:
         })
         inserted_roles += result.rowcount
 
-print(f"  {inserted_roles} new roles inserted ({len(all_roles)} unique total)")
+print(f"  dim_role: {inserted_roles} new roles inserted ({len(all_roles)} unique roles total)")
 
 
-# --- Verify ---
+# VERIFY   
 print("\nVerification:")
 with engine.connect() as conn:
     r1 = conn.execute(text("SELECT COUNT(*) FROM job_listings")).scalar()
@@ -208,15 +223,16 @@ with engine.connect() as conn:
         "SELECT hiring_stage, COUNT(*) as n FROM fresher_applications GROUP BY hiring_stage ORDER BY n DESC"
     )).fetchall()
 
-print(f"  job_listings          : {r1}")
-print(f"  fresher_applications  : {r2}")
-print(f"  dim_city              : {r3}")
-print(f"  dim_role              : {r4}")
-print("\n  Top 5 cities:")
+print(f"  job_listings rows:         {r1}")
+print(f"  fresher_applications rows: {r2}")
+print(f"  dim_city rows:             {r3}")
+print(f"  dim_role rows:             {r4}")
+print(f"\n  Top 5 cities (job listings):")
 for row in r5:
     print(f"    {row[0]}: {row[1]}")
-print("\n  Hiring stages:")
+print(f"\n  Hiring stage breakdown:")
 for row in r6:
     print(f"    {row[0]}: {row[1]}")
 
-print("\nDone.")
+print("\n[Done] Data loaded successfully into PostgreSQL!")
+print("  Next: run sql/analysis_queries.sql to explore the data")
