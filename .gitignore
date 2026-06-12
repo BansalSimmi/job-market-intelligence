@@ -24,8 +24,8 @@ data/processed/*.csv
 # Excel / Office temp files
 ~$*.xlsx
 
-# Power BI
-*.pbix
+# Power BI — track .pbix files (kept small, no embedded data)
+# *.pbix
 
 # OS
 .DS_Store
