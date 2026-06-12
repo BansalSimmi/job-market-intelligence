@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Data files — download manually or via DVC
+data/raw/*.csv
+data/processed/*.csv
+data/processed/*.png
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Excel / Office temp files
+~$*.xlsx
+
+# Power BI
+*.pbix
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
