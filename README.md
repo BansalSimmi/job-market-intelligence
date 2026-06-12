@@ -71,7 +71,7 @@ job-market-intelligence/
 │   └── job_market_report.xlsx            # Auto-generated: Dashboard, Salary by City, Hiring Analysis, Skills
 │
 ├── powerbi/
-│   └── dashboard.pbix                    # Interactive Power BI dashboard
+│   └── job.pbix                    # Interactive Power BI dashboard
 │
 ├── README.md
 ├── requirements.txt
